@@ -1,4 +1,10 @@
-// Deterministic kinematic solver: per-axis AABB sweeps + step-up + ground snap.
+// Deterministic kinematic solver: depenetration + per-axis AABB sweeps +
+// step-up + ground snap.
+//
+// Fix history: bots were clipping walls/floors because the per-axis sweep
+// early-returned on `delta === 0`, which meant a collider that started a tick
+// already overlapping geometry never got pushed out. depenetrate() below
+// guarantees the invariant the sweep assumed: never begin a tick inside a box.
 import * as THREE from 'three';
 import { BOXES } from '../scene/Map';
 import { T } from '../store/transient';
@@ -24,9 +30,39 @@ function overlaps(px: number, py: number, pz: number, b: { min: [number, number,
   return px + r > b.min[0] && px - r < b.max[0] && py + h > b.min[1] && py < b.max[1] && pz + r > b.min[2] && pz - r < b.max[2];
 }
 
+function depenetrate(pos: THREE.Vector3, vel: THREE.Vector3): void {
+  const r = PLAYER.radius, h = PLAYER.height;
+  for (const b of BOXES) {
+    if (!overlaps(pos.x, pos.y, pos.z, b)) continue;
+    // Push out along the axis of least penetration
+    const dx0 = (pos.x + r) - b.min[0];
+    const dx1 = b.max[0] - (pos.x - r);
+    const dz0 = (pos.z + r) - b.min[2];
+    const dz1 = b.max[2] - (pos.z - r);
+    const dy0 = (pos.y + h) - b.min[1];
+    const dy1 = b.max[1] - pos.y;
+    const dx = Math.min(dx0, dx1);
+    const dz = Math.min(dz0, dz1);
+    const dy = Math.min(dy0, dy1);
+    if (dx <= dz && dx <= dy) {
+      pos.x += dx0 < dx1 ? -dx0 - 0.001 : dx1 + 0.001;
+      vel.x = 0;
+    } else if (dz <= dy) {
+      pos.z += dz0 < dz1 ? -dz0 - 0.001 : dz1 + 0.001;
+      vel.z = 0;
+    } else {
+      pos.y += dy0 < dy1 ? -dy0 - 0.001 : dy1 + 0.001;
+      vel.y = 0;
+    }
+  }
+}
+
 export function collideMove(pos: THREE.Vector3, vel: THREE.Vector3, dt: number, o: MoveOut): void {
   const r = PLAYER.radius, step = PLAYER.stepHeight;
   o.grounded = false; o.hitWall = false; o.landed = false;
+
+  // Guarantee we never start a tick inside geometry (the previous root cause of clipping).
+  depenetrate(pos, vel);
 
   const sweep = (axis: 'x' | 'z', delta: number) => {
     if (delta === 0) return;
