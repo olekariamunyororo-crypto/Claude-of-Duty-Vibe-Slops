@@ -4,6 +4,7 @@ import { bots } from '../game/ai/bots';
 import { T } from '../game/store/transient';
 import { Button } from './Button';
 import { YachtUploader } from './YachtUploader';
+import { Nv4Uploader } from './Nv4Uploader';
 
 interface Props {
   screen: 'main' | 'pause' | 'results';
@@ -124,12 +125,14 @@ export function MenuShell({ screen, onDeploy, onResume, onQuit, onRematch }: Pro
         <div className="text-cyan-300 font-black tracking-[5px] text-[16px] mb-5">CREDITS</div>
         <div className="mx-auto mb-5 w-[420px] text-left text-[12px] leading-5 text-slate-400">
           3D models via Sketchfab (Creative Commons): "Frickie's Yacht", "Custom Carbine Rifle
-          NV4 (COD)", "Ghost COD Soldier Guy" — © their respective authors. You can swap the
-          yacht live below (stored locally in IndexedDB). Unofficial fan project, not
-          affiliated with Activision, Treyarch, Microsoft, Anthropic or Zhipu AI.
-          Original code: MIT.
+          NV4 (COD)", "Ghost COD Soldier Guy" — © their respective authors. Swap the yacht or
+          NV-4 below (stored locally in IndexedDB). Unofficial fan project, not affiliated
+          with Activision, Treyarch, Microsoft, Anthropic or Zhipu AI. Original code: MIT.
         </div>
-        <div className="mb-6 flex justify-center"><YachtUploader /></div>
+        <div className="mb-4 flex flex-col items-center gap-3">
+          <YachtUploader />
+          <Nv4Uploader />
+        </div>
         <Button title="◀ BACK" onClick={() => setMenuScreen('main')} wide />
       </Frame>
     );
@@ -141,7 +144,7 @@ export function MenuShell({ screen, onDeploy, onResume, onQuit, onRematch }: Pro
       <Button title="▶  TAP TO DEPLOY" onClick={onDeploy ?? (() => {})} wide />
       <Button title="LOADOUT · NV-4 CARBINE" onClick={() => {}} wide subtle />
       <Button title="SETTINGS" onClick={() => setMenuScreen('settings')} wide subtle />
-      <Button title="CREDITS / YACHT SWAP" onClick={() => setMenuScreen('credits')} wide subtle />
+      <Button title="CREDITS / MODEL SWAP" onClick={() => setMenuScreen('credits')} wide subtle />
       <div className="mt-6 text-[11px] text-slate-500">
         First to {KILL_TARGET} kills · desktop: click to lock pointer · mobile: landscape + touch
       </div>
