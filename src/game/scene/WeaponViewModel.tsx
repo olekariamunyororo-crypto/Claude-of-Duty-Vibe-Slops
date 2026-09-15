@@ -11,43 +11,33 @@ import { MODEL_STATE } from '../utils/GLBProbe';
 import { registerSpecGlossExtension } from '../utils/GLTFSpecGloss';
 import { cloneScene, nv4StandIn } from '../utils/ProceduralGeometry';
 
-// Local-space offsets relative to the camera. Tuned for a ~0.7–0.9 m carbine.
 const HIP = new THREE.Vector3(0.22, -0.28, -0.48);
 const ADS = new THREE.Vector3(0.0, -0.175, -0.38);
 const _pos = new THREE.Vector3();
 const _quat = new THREE.Quaternion();
 const _euler = new THREE.Euler();
 
-/**
- * Load + orient the Sketchfab NV4 so the barrel points down local −Z
- * (standard FPS convention). Many asset packs face +Z or +X by default.
- */
 function Nv4Model({ url }: { url: string }) {
   const gltf = useGLTF(url, true, true, registerSpecGlossExtension) as { scene: THREE.Group };
 
   const model = useMemo(() => {
     const root = cloneScene(gltf.scene);
 
-    // Normalize scale to a comfortable first-person length (~0.78 m).
     const box = new THREE.Box3().setFromObject(root);
     const size = box.getSize(new THREE.Vector3());
     const longest = Math.max(size.x, size.y, size.z, 1e-6);
-    const targetLen = 0.78;
-    root.scale.setScalar(targetLen / longest);
+    root.scale.setScalar(0.78 / longest);
 
-    // Re-measure after scale.
     const box2 = new THREE.Box3().setFromObject(root);
     const c = box2.getCenter(new THREE.Vector3());
-    root.position.sub(c); // center at origin
+    root.position.sub(c);
 
-    // Orient: longest axis → −Z (barrel forward in FPS space).
     if (size.x >= size.z && size.x >= size.y) {
       root.rotation.y = -Math.PI / 2;
     } else if (size.z >= size.x && size.z >= size.y) {
       root.rotation.y = Math.PI;
     }
 
-    // Final re-center after rotation so grip sits near origin.
     const box3 = new THREE.Box3().setFromObject(root);
     const c3 = box3.getCenter(new THREE.Vector3());
     root.position.x -= c3.x;
@@ -126,7 +116,7 @@ export function WeaponViewModel() {
     <group ref={group} scale={1}>
       {useGLB ? (
         <Suspense fallback={<primitive object={standIn} />}>
-          <Nv4Model url={nv4.url} />
+          <Nv4Model key={nv4.url} url={nv4.url} />
         </Suspense>
       ) : (
         <primitive object={standIn} />
