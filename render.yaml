@@ -1,0 +1,14 @@
+# Render.com — Static Site. Commit this file, then "New +" → "Blueprint".
+services:
+  - type: web
+    name: claude-of-duty
+    runtime: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
