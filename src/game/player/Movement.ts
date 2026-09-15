@@ -30,12 +30,6 @@ function overlaps(px: number, py: number, pz: number, b: { min: [number, number,
   return px + r > b.min[0] && px - r < b.max[0] && py + h > b.min[1] && py < b.max[1] && pz + r > b.min[2] && pz - r < b.max[2];
 }
 
-/**
- * Push a collider out of any box it currently overlaps, along the axis of
- * least penetration. Two passes to handle corner cases where one push lands
- * the collider in another box. Runs before the per-axis sweeps so the sweep's
- * "delta === 0 → skip" shortcut can never let a stuck collider tunnel.
- */
 function depenetrate(pos: THREE.Vector3, vel: THREE.Vector3): boolean {
   const r = PLAYER.radius, h = PLAYER.height;
   let moved = false;
@@ -110,7 +104,6 @@ export function collideMove(pos: THREE.Vector3, vel: THREE.Vector3, dt: number, 
   sweep('x', vel.x * dt);
   sweep('z', vel.z * dt);
 
-  // Second depenetrate after horizontal move (catches residual overlaps).
   depenetrate(pos, vel);
 
   const ny = pos.y + vel.y * dt;
@@ -146,7 +139,6 @@ export function inPool(x: number, y: number, z: number): boolean {
   return x > 1.2 && x < 5.2 && z > -3.5 && z < 3.5 && y < 3.0 && y > 1.9;
 }
 
-/** Fixed-tick player update: look, wish-vel, gravity/jump, collide, bob, recoil decay. */
 export function playerMove(dt: number): void {
   const tp = T.player;
   tp.prevPos.copy(tp.pos);
@@ -219,7 +211,6 @@ export function playerMove(dt: number): void {
     }
   } else tp.bobY *= 0.8;
 
-  // soft push-out vs bots
   for (const b of bots) {
     if (!b.alive) continue;
     const dx = tp.pos.x - b.pos.x, dz = tp.pos.z - b.pos.z;
@@ -230,8 +221,9 @@ export function playerMove(dt: number): void {
     }
   }
 
-  P.recoilP *= Math.max(0, 1 - 10 * dt);
-  P.recoilY *= Math.max(0, 1 - 10 * dt);
-  P.bloom = Math.max(0, P.bloom - dt * 6);
-  T.viewmodel.kick *= Math.max(0, 1 - 14 * dt);
+  // Faster recovery so reduced recoil settles quickly between shots
+  P.recoilP *= Math.max(0, 1 - 14 * dt);
+  P.recoilY *= Math.max(0, 1 - 14 * dt);
+  P.bloom = Math.max(0, P.bloom - dt * 8);
+  T.viewmodel.kick *= Math.max(0, 1 - 16 * dt);
 }
