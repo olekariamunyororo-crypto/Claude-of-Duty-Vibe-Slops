@@ -5,6 +5,7 @@ import { T } from '../game/store/transient';
 import { Button } from './Button';
 import { YachtUploader } from './YachtUploader';
 import { Nv4Uploader } from './Nv4Uploader';
+import { GhostUploader } from './GhostUploader';
 
 interface Props {
   screen: 'main' | 'pause' | 'results';
@@ -20,7 +21,6 @@ export function MenuShell({ screen, onDeploy, onResume, onQuit, onRematch }: Pro
   const settings = useGame((s) => s.settings);
   const setSettings = useGame((s) => s.setSettings);
   const score = useGame((s) => s.score);
-  const best = useGame((s) => s.best);
 
   const Frame = ({ children }: { children: ReactNode }) => (
     <div className="flex h-full w-full items-center justify-center overflow-auto p-6"
@@ -124,14 +124,14 @@ export function MenuShell({ screen, onDeploy, onResume, onQuit, onRematch }: Pro
       <Frame>
         <div className="text-cyan-300 font-black tracking-[5px] text-[16px] mb-5">CREDITS</div>
         <div className="mx-auto mb-5 w-[420px] text-left text-[12px] leading-5 text-slate-400">
-          3D models via Sketchfab (Creative Commons): "Frickie's Yacht", "Custom Carbine Rifle
-          NV4 (COD)", "Ghost COD Soldier Guy" — © their respective authors. Swap the yacht or
-          NV-4 below (stored locally in IndexedDB). Unofficial fan project, not affiliated
-          with Activision, Treyarch, Microsoft, Anthropic or Zhipu AI. Original code: MIT.
+          3D models via Sketchfab (Creative Commons). Swap yacht, NV-4, or bot body below
+          (stored in IndexedDB). SCI-FI SuperSoldier works great for bots. Unofficial fan
+          project — not affiliated with Activision, Treyarch, Microsoft, Anthropic or Zhipu AI.
         </div>
         <div className="mb-4 flex flex-col items-center gap-3">
           <YachtUploader />
           <Nv4Uploader />
+          <GhostUploader />
         </div>
         <Button title="◀ BACK" onClick={() => setMenuScreen('main')} wide />
       </Frame>
