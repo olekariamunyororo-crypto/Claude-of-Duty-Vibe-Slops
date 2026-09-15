@@ -12,8 +12,9 @@ export const NV4: WeaponDef = {
   name: 'NV-4',
   rpm: 750, magSize: 30, reserveMax: 120,
   damageBody: 26, damageHead: 42,
-  spreadHip: 2.2 * DEG, spreadAds: 0.3 * DEG,
-  bloomPerShot: 0.16 * DEG, bloomMax: 2.4 * DEG,
+  spreadHip: 1.8 * DEG, spreadAds: 0.22 * DEG,
+  bloomPerShot: 0.10 * DEG, bloomMax: 1.6 * DEG,
   reloadTime: 1.9,
-  recoilPitch: [0.55, 0.95], recoilYaw: [0.15, 0.55],
+  // Reduced recoil — controllable full-auto, still readable feedback
+  recoilPitch: [0.22, 0.40], recoilYaw: [0.06, 0.20],
 };

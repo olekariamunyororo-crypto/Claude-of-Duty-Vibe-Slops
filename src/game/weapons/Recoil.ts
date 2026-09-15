@@ -4,7 +4,8 @@ import { P } from '../player/playerState';
 import { T } from '../store/transient';
 
 export function recoilShot(def: WeaponDef = NV4): void {
-  const amp = T.player.ads > 0.5 ? 0.75 : 1;
+  // ADS damps camera kick further; hip-fire stays readable but milder overall
+  const amp = T.player.ads > 0.5 ? 0.55 : 0.85;
   P.recoilP += randRange(def.recoilPitch[0], def.recoilPitch[1]) * DEG * amp;
   P.recoilY += (Math.random() < 0.5 ? -1 : 1) * randRange(def.recoilYaw[0], def.recoilYaw[1]) * DEG * amp;
 }
