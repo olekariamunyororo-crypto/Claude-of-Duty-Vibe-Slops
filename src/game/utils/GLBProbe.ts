@@ -1,5 +1,5 @@
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { resolveYachtUrl, resolveNv4Url } from '../scene/modelStorage';
+import { resolveYachtUrl, resolveNv4Url, resolveGhostUrl } from '../scene/modelStorage';
 import { useGame } from '../store/gameStore';
 import { registerSpecGlossExtension } from './GLTFSpecGloss';
 
@@ -40,11 +40,15 @@ async function probe(url: string): Promise<number | null> {
 }
 
 export async function probeModels(): Promise<void> {
-  const [yachtUrl, nv4Url] = await Promise.all([resolveYachtUrl(), resolveNv4Url()]);
+  const [yachtUrl, nv4Url, ghostUrl] = await Promise.all([
+    resolveYachtUrl(),
+    resolveNv4Url(),
+    resolveGhostUrl(),
+  ]);
   const [y, n, g] = await Promise.all([
     probe(yachtUrl),
     probe(nv4Url),
-    probe(modelUrl('ghost')),
+    probe(ghostUrl),
   ]);
   const apply = (key: 'yacht' | 'nv4' | 'ghost', url: string, tris: number | null) => {
     const st = MODEL_STATE[key];
@@ -55,6 +59,6 @@ export async function probeModels(): Promise<void> {
   };
   apply('yacht', yachtUrl, y);
   apply('nv4', nv4Url, n);
-  apply('ghost', modelUrl('ghost'), g);
+  apply('ghost', ghostUrl, g);
   useGame.getState().bumpDeploy();
 }

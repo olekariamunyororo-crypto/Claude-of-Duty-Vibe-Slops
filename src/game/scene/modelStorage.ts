@@ -1,4 +1,4 @@
-// IndexedDB storage for optional GLB swaps (yacht, nv4, …).
+// IndexedDB storage for optional GLB swaps (yacht, nv4, ghost).
 // Keys share one object store; each model has its own blob URL cache.
 
 const DB_NAME = 'codv';
@@ -77,7 +77,6 @@ export function invalidateModelCache(key: ModelKey): void {
   revoke(key);
 }
 
-// ---- Back-compat aliases for existing yacht call sites ----
 export const idbGetYacht = () => idbGetModel('yacht');
 export const idbSetYacht = (b: Blob) => idbSetModel('yacht', b);
 export const idbClearYacht = () => idbClearModel('yacht');
@@ -89,3 +88,9 @@ export const idbSetNv4 = (b: Blob) => idbSetModel('nv4', b);
 export const idbClearNv4 = () => idbClearModel('nv4');
 export const resolveNv4Url = () => resolveModelUrl('nv4');
 export const invalidateNv4Cache = () => invalidateModelCache('nv4');
+
+export const idbGetGhost = () => idbGetModel('ghost');
+export const idbSetGhost = (b: Blob) => idbSetModel('ghost', b);
+export const idbClearGhost = () => idbClearModel('ghost');
+export const resolveGhostUrl = () => resolveModelUrl('ghost');
+export const invalidateGhostCache = () => invalidateModelCache('ghost');
