@@ -1,6 +1,14 @@
 // 4 FFA Ghost clones: staggered LOS perception, BFS patrol, strafe combat, respawn.
+//
+// v2.3 fixes:
+//  - Patrol 3.2 u/s, combat 2.6 u/s (was 4.4 / 3.6). The static mesh read as
+//    "gliding" at the old speeds; the procedural gait in BotsView is tuned to
+//    this range.
+//  - respawn() depenetrates the spawn point so a bot never starts inside a box.
+//  - On hitWall: kill most horizontal velocity and force a repath so bots do not
+//    keep driving into geometry.
 import * as THREE from 'three';
-import { NAV, SPAWNS, nearestNode, bfsPath, losBlocked } from '../scene/Map';
+import { NAV, SPAWNS, BOXES, nearestNode, bfsPath, losBlocked } from '../scene/Map';
 import { collideMove, PLAYER } from '../player/Movement';
 import { botFire } from '../weapons/Ballistics';
 import { T } from '../store/transient';
@@ -26,7 +34,6 @@ const eye = new THREE.Vector3();
 const targetEye = new THREE.Vector3();
 const aim = new THREE.Vector3();
 
-// tiny subscription so BotsView can react to spawn/reset
 let version = 0;
 const listeners = new Set<() => void>();
 export function subscribeBots(cb: () => void): () => void { listeners.add(cb); return () => { listeners.delete(cb); }; }
@@ -71,6 +78,15 @@ export function resetBots(count = 4): void {
 
 function respawn(bot: Bot): void {
   bot.pos.copy(pickSpawn(bot));
+  // Safety net: if a spawn point resolves inside a box (deck-height mismatch,
+  // stairwell overlap), lift the bot on top of it.
+  for (const b of BOXES) {
+    if (bot.pos.x + PLAYER.radius > b.min[0] && bot.pos.x - PLAYER.radius < b.max[0] &&
+        bot.pos.z + PLAYER.radius > b.min[2] && bot.pos.z - PLAYER.radius < b.max[2] &&
+        bot.pos.y + PLAYER.height > b.min[1] && bot.pos.y < b.max[1]) {
+      bot.pos.y = b.max[1] + 0.01;
+    }
+  }
   bot.prevPos.copy(bot.pos);
   bot.vel.set(0, 0, 0);
   bot.hp = 100; bot.alive = true; bot.state = 'patrol';
@@ -87,7 +103,6 @@ export function botsTick(dt: number): void {
     }
     bot.prevPos.copy(bot.pos);
 
-    // ---- perception (staggered) ----
     if ((bot.id + Math.floor(t * 4)) % 2 === 0) {
       let saw = false;
       if (P.alive && t - P.spawnProtT > 1.2) {
@@ -101,8 +116,7 @@ export function botsTick(dt: number): void {
       else if (t - bot.seeT > 2.2) bot.state = 'patrol';
     }
 
-    // ---- movement + combat ----
-    let wishX = 0, wishZ = 0, speed = 4.4;
+    let wishX = 0, wishZ = 0, speed = 3.2;   // was 4.4
     let faceX = 0, faceZ = 0;
 
     if (bot.state === 'combat') {
@@ -117,9 +131,8 @@ export function botsTick(dt: number): void {
       if (d > 26) { wishX += faceX; wishZ += faceZ; }
       else if (d < 7) { wishX -= faceX; wishZ -= faceZ; }
       const wl = Math.hypot(wishX, wishZ) || 1;
-      wishX /= wl; wishZ /= wl; speed = 3.6;
+      wishX /= wl; wishZ /= wl; speed = 2.6;   // was 3.6
 
-      // burst fire with per-shot LOS re-check
       if (t - bot.seeT < 0.6 && t > bot.reactT) {
         bot.fireT -= dt;
         if (bot.burst > 0 && bot.fireT <= 0) {
@@ -138,7 +151,6 @@ export function botsTick(dt: number): void {
         }
       }
     } else {
-      // patrol via BFS path
       if (bot.path.length === 0 && t > bot.repathT) {
         bot.repathT = t + randRange(3, 6);
         bot.path = bfsPath(nearestNode(bot.pos), (Math.random() * NAV.length) | 0);
@@ -165,6 +177,16 @@ export function botsTick(dt: number): void {
     bot.vel.y -= PLAYER.gravity * dt;
 
     collideMove(bot.pos, bot.vel, dt, moveOut);
+
+    // If we hit a wall, stop pushing into it and force a repath soon.
+    if (moveOut.hitWall) {
+      bot.vel.x *= 0.15;
+      bot.vel.z *= 0.15;
+      if (bot.state === 'patrol') {
+        bot.path = [];
+        bot.repathT = Math.min(bot.repathT, t + 0.4);
+      }
+    }
 
     if (faceX !== 0 || faceZ !== 0) {
       const want = Math.atan2(-faceX, -faceZ);
