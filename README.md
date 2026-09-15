@@ -22,10 +22,9 @@ Works unchanged on Vercel / Netlify / Cloudflare Pages / GitHub Pages (`base: '.
 - ghost.glb — Ghost COD Soldier Guy
   https://sketchfab.com/3d-models/ghost-cod-soldier-guy-950353636244443c833de4137f660538
 
-GLB, no Draco · yacht<15MB · nv4<3MB · ghost<5MB. Live yacht swap: Menu → Credits →
-Upload (IndexedDB). Respect each CC license — attribution in Credits.
+GLB, no Draco · yacht<15MB · nv4<3MB · ghost<5MB.
 
 ## Controls
 Desktop: click to lock pointer · WASD · Shift sprint · Space jump · LMB fire · RMB ADS ·
-R reload · P pause. Mobile: left stick (full-forward sprint) · right drag look ·
-double-tap look = jump · FIRE/ADS/JUMP/RELOAD buttons. First to 30 kills wins.
+R reload · P pause. Mobile: left stick · right drag look · double-tap look = jump ·
+FIRE/ADS/JUMP/RELOAD buttons. First to 30 kills wins.
