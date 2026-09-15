@@ -30,48 +30,68 @@ function overlaps(px: number, py: number, pz: number, b: { min: [number, number,
   return px + r > b.min[0] && px - r < b.max[0] && py + h > b.min[1] && py < b.max[1] && pz + r > b.min[2] && pz - r < b.max[2];
 }
 
-function depenetrate(pos: THREE.Vector3, vel: THREE.Vector3): void {
+/**
+ * Push a collider out of any box it currently overlaps, along the axis of
+ * least penetration. Two passes to handle corner cases where one push lands
+ * the collider in another box. Runs before the per-axis sweeps so the sweep's
+ * "delta === 0 → skip" shortcut can never let a stuck collider tunnel.
+ */
+function depenetrate(pos: THREE.Vector3, vel: THREE.Vector3): boolean {
   const r = PLAYER.radius, h = PLAYER.height;
-  for (const b of BOXES) {
-    if (!overlaps(pos.x, pos.y, pos.z, b)) continue;
-    // Push out along the axis of least penetration
-    const dx0 = (pos.x + r) - b.min[0];
-    const dx1 = b.max[0] - (pos.x - r);
-    const dz0 = (pos.z + r) - b.min[2];
-    const dz1 = b.max[2] - (pos.z - r);
-    const dy0 = (pos.y + h) - b.min[1];
-    const dy1 = b.max[1] - pos.y;
-    const dx = Math.min(dx0, dx1);
-    const dz = Math.min(dz0, dz1);
-    const dy = Math.min(dy0, dy1);
-    if (dx <= dz && dx <= dy) {
-      pos.x += dx0 < dx1 ? -dx0 - 0.001 : dx1 + 0.001;
-      vel.x = 0;
-    } else if (dz <= dy) {
-      pos.z += dz0 < dz1 ? -dz0 - 0.001 : dz1 + 0.001;
-      vel.z = 0;
-    } else {
-      pos.y += dy0 < dy1 ? -dy0 - 0.001 : dy1 + 0.001;
-      vel.y = 0;
+  let moved = false;
+
+  for (let pass = 0; pass < 2; pass++) {
+    let deepest: { pen: number; axis: 0 | 1 | 2; sign: number } | null = null;
+
+    for (const b of BOXES) {
+      const dxPos = b.min[0] - (pos.x + r);
+      const dxNeg = b.max[0] - (pos.x - r);
+      const dyPos = b.min[1] - (pos.y + h);
+      const dyNeg = b.max[1] - pos.y;
+      const dzPos = b.min[2] - (pos.z + r);
+      const dzNeg = b.max[2] - (pos.z - r);
+
+      if (dxPos > 0 || dxNeg < 0) continue;
+      if (dyPos > 0 || dyNeg < 0) continue;
+      if (dzPos > 0 || dzNeg < 0) continue;
+
+      const cands: [number, 0 | 1 | 2, number][] = [
+        [Math.abs(dxPos), 0, +1],
+        [Math.abs(dxNeg), 0, -1],
+        [Math.abs(dyPos), 1, +1],
+        [Math.abs(dyNeg), 1, -1],
+        [Math.abs(dzPos), 2, +1],
+        [Math.abs(dzNeg), 2, -1],
+      ];
+      for (const [pen, axis, sign] of cands) {
+        if (!deepest || pen < deepest.pen) deepest = { pen, axis, sign };
+      }
     }
+
+    if (!deepest) break;
+    const { axis, sign, pen } = deepest;
+    if (axis === 0) { pos.x += sign * (pen + 0.001); vel.x = 0; }
+    else if (axis === 1) { pos.y += sign * (pen + 0.001); vel.y = 0; }
+    else { pos.z += sign * (pen + 0.001); vel.z = 0; }
+    moved = true;
   }
+  return moved;
 }
 
 export function collideMove(pos: THREE.Vector3, vel: THREE.Vector3, dt: number, o: MoveOut): void {
   const r = PLAYER.radius, step = PLAYER.stepHeight;
   o.grounded = false; o.hitWall = false; o.landed = false;
 
-  // Guarantee we never start a tick inside geometry (the previous root cause of clipping).
   depenetrate(pos, vel);
 
   const sweep = (axis: 'x' | 'z', delta: number) => {
-    if (delta === 0) return;
+    if (Math.abs(delta) < 1e-8) return;
     const np = pos[axis] + delta;
     for (const b of BOXES) {
       const nx = axis === 'x' ? np : pos.x, nz = axis === 'z' ? np : pos.z;
       if (!overlaps(nx, pos.y + 0.02, nz, b)) continue;
       let stepped = false;
-      if (pos.y + step >= b.max[1] && pos.y < b.max[1]) {
+      if (pos.y + step >= b.max[1] && pos.y < b.max[1] - 0.01) {
         let free = true;
         for (const c of BOXES) if (overlaps(nx, b.max[1] + 0.01, nz, c)) { free = false; break; }
         if (free) { pos.y = b.max[1] + 0.01; stepped = true; }
@@ -89,6 +109,9 @@ export function collideMove(pos: THREE.Vector3, vel: THREE.Vector3, dt: number, 
 
   sweep('x', vel.x * dt);
   sweep('z', vel.z * dt);
+
+  // Second depenetrate after horizontal move (catches residual overlaps).
+  depenetrate(pos, vel);
 
   const ny = pos.y + vel.y * dt;
   if (vel.y <= 0) {
