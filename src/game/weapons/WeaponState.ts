@@ -1,4 +1,3 @@
-// Fire control: rpm gate, bloom, reload FSM, juice triggers.
 import * as THREE from 'three';
 import { NV4 } from './weaponData';
 import { recoilShot } from './Recoil';
@@ -50,9 +49,10 @@ export function weaponTick(dt: number): void {
     playerFire(_o, _d, NV4.damageBody, NV4.damageHead);
     recoilShot();
     P.bloom = Math.min(NV4.bloomMax, P.bloom + NV4.bloomPerShot);
-    T.viewmodel.kick = Math.min(0.06, T.viewmodel.kick + 0.03);
+    // Milder viewmodel kick so the gun stays readable in ADS
+    T.viewmodel.kick = Math.min(0.032, T.viewmodel.kick + 0.014);
     T.viewmodel.flash = T.time;
-    T.shake = Math.max(T.shake, T.player.ads > 0.5 ? 0.012 : 0.02);
+    T.shake = Math.max(T.shake, T.player.ads > 0.5 ? 0.006 : 0.012);
     SFX.play('shot', { gain: 0.85, rate: 0.96 + Math.random() * 0.08 });
   } else {
     T.weapon.spread = (T.player.ads > 0.5 ? NV4.spreadAds : NV4.spreadHip) + P.bloom;
