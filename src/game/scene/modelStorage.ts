@@ -64,12 +64,21 @@ export async function idbClearModel(key: ModelKey): Promise<void> {
   revoke(key);
 }
 
+/** Default remote Ghost body (Thrixel — game_ready_military_character). */
+export const DEFAULT_GHOST_URL =
+  'https://api.thrixel.com/api/v1/994256bc-d57f-4d1e-92ba-32020aceda22/download?format=glb';
+
 export async function resolveModelUrl(key: ModelKey): Promise<string> {
   if (cached[key]) return cached[key]!;
   const blob = await idbGetModel(key);
-  cached[key] = blob
-    ? URL.createObjectURL(blob)
-    : `${import.meta.env.BASE_URL}models/${key}.glb`;
+  if (blob) {
+    cached[key] = URL.createObjectURL(blob);
+  } else if (key === 'ghost') {
+    // Prefer the Thrixel military character over the tiny bundled placeholder
+    cached[key] = DEFAULT_GHOST_URL;
+  } else {
+    cached[key] = `${import.meta.env.BASE_URL}models/${key}.glb`;
+  }
   return cached[key]!;
 }
 
