@@ -1,7 +1,5 @@
-// Probe the three GLBs at Deploy: fetch → GLTFLoader.parse → triangle count.
-// < 100 triangles = shipped placeholder → procedural stand-ins are used instead.
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { resolveYachtUrl } from '../scene/yachtStorage';
+import { resolveYachtUrl, resolveNv4Url } from '../scene/modelStorage';
 import { useGame } from '../store/gameStore';
 import { registerSpecGlossExtension } from './GLTFSpecGloss';
 
@@ -42,8 +40,12 @@ async function probe(url: string): Promise<number | null> {
 }
 
 export async function probeModels(): Promise<void> {
-  const yachtUrl = await resolveYachtUrl();
-  const [y, n, g] = await Promise.all([probe(yachtUrl), probe(modelUrl('nv4')), probe(modelUrl('ghost'))]);
+  const [yachtUrl, nv4Url] = await Promise.all([resolveYachtUrl(), resolveNv4Url()]);
+  const [y, n, g] = await Promise.all([
+    probe(yachtUrl),
+    probe(nv4Url),
+    probe(modelUrl('ghost')),
+  ]);
   const apply = (key: 'yacht' | 'nv4' | 'ghost', url: string, tris: number | null) => {
     const st = MODEL_STATE[key];
     st.url = url;
@@ -52,7 +54,7 @@ export async function probeModels(): Promise<void> {
     st.placeholder = tris === null || tris < 100;
   };
   apply('yacht', yachtUrl, y);
-  apply('nv4', modelUrl('nv4'), n);
+  apply('nv4', nv4Url, n);
   apply('ghost', modelUrl('ghost'), g);
   useGame.getState().bumpDeploy();
 }
