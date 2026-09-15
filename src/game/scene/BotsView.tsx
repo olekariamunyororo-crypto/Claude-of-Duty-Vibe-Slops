@@ -1,18 +1,16 @@
-// Bot rendering with procedural locomotion + attached NV4.
+// Bot rendering: GLB animation clips when available, else procedural gait + NV4.
 //
-// v2.3: real ghost.glb is a static mesh (no animations, no gun). Without leg
-// motion the bots read as "gliding". This component:
-//   1. Probes the clone for leg bones and swings them with a gait phase that
-//      advances by *distance traveled* (not wall time) so foot speed always
-//      matches ground speed.
-//   2. If no skeleton is found, sells the gait with lean + lateral sway +
-//      step-bob + yaw wobble — all at walk-cycle frequency.
-//   3. Clones nv4.glb (or the procedural stand-in) and mounts it at a
-//      right-hand anchor so bots visibly carry a weapon.
-import { Suspense, useMemo, useRef, useSyncExternalStore } from 'react';
+// v2.4 — animation integration:
+//   - Loads ghost GLB with its AnimationClip[] (SCI-FI SuperSoldier, Mixamo, etc.)
+//   - Per-bot AnimationMixer on a SkeletonUtils clone
+//   - Maps bot state + speed → idle / walk / run / death clips by name heuristic
+//   - Crossfades between actions; timeScale tracks ground speed
+//   - Falls back to procedural leg swing / lean if the model has no clips
+import { Suspense, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useGLTF } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { bots, subscribeBots, getBotsVersion } from '../ai/bots';
 import { MODEL_STATE } from '../utils/GLBProbe';
 import { registerSpecGlossExtension } from '../utils/GLTFSpecGloss';
@@ -21,13 +19,55 @@ import { T } from '../store/transient';
 
 const FLASH_COLOR = new THREE.Color('#ff5040');
 const WEAPON_ANCHOR = new THREE.Vector3(0.28, 1.28, -0.24);
-const PATROL_SPEED = 3.2; // keep in sync with bots.ts — used to normalize the gait
+const PATROL_SPEED = 3.2;
+const FADE = 0.22;
 
-function useGhostBase(url: string): THREE.Group {
-  const gltf = useGLTF(url, true, true, registerSpecGlossExtension) as { scene: THREE.Group };
-  // Negative yOffset drops the mesh so feet sit on the ground (many Sketchfab
-  // humanoids have origin at pelvis / mid-body and otherwise float).
-  return useNormalizedModel(gltf.scene, 1.8, -0.12, true);
+type ClipKind = 'idle' | 'walk' | 'run' | 'death' | 'other';
+
+function classifyClip(name: string): ClipKind {
+  const n = name.toLowerCase();
+  if (/death|die|dead|ragdoll/.test(n)) return 'death';
+  if (/run|sprint|jog/.test(n)) return 'run';
+  if (/walk|locomotion|move|stride/.test(n)) return 'walk';
+  if (/idle|stand|breath|wait|tpose|t-pose|rest/.test(n)) return 'idle';
+  if (n.includes('walk')) return 'walk';
+  if (n.includes('run')) return 'run';
+  if (n.includes('idle')) return 'idle';
+  return 'other';
+}
+
+function pickClips(clips: THREE.AnimationClip[]) {
+  const by: Record<ClipKind, THREE.AnimationClip | null> = {
+    idle: null, walk: null, run: null, death: null, other: null,
+  };
+  for (const c of clips) {
+    const k = classifyClip(c.name);
+    if (k !== 'other' && !by[k]) by[k] = c;
+    else if (k === 'other' && !by.other) by.other = c;
+  }
+  if (!by.walk) by.walk = by.run ?? by.other;
+  if (!by.run) by.run = by.walk;
+  if (!by.idle) by.idle = by.walk ?? by.other;
+  return by;
+}
+
+function normalizeRoot(root: THREE.Object3D, targetHeight = 1.8, yOffset = -0.12) {
+  const box = new THREE.Box3().setFromObject(root);
+  const size = box.getSize(new THREE.Vector3());
+  const h = Math.max(size.y, 1e-6);
+  root.scale.setScalar(targetHeight / h);
+  const box2 = new THREE.Box3().setFromObject(root);
+  const c = box2.getCenter(new THREE.Vector3());
+  root.position.x -= c.x;
+  root.position.z -= c.z;
+  root.position.y -= box2.min.y + yOffset;
+}
+
+function useGhostGltf(url: string) {
+  return useGLTF(url, true, true, registerSpecGlossExtension) as {
+    scene: THREE.Group;
+    animations: THREE.AnimationClip[];
+  };
 }
 
 function useNv4Base(url: string | null): THREE.Group | null {
@@ -36,26 +76,12 @@ function useNv4Base(url: string | null): THREE.Group | null {
   return useNormalizedModel(gltf.scene, 0.62, 0, true);
 }
 
-function useClonedBody(base: THREE.Group): THREE.Group {
-  return useMemo(() => {
-    const c = cloneScene(base);
-    c.traverse((o) => {
-      const m = o as THREE.Mesh;
-      if (m.isMesh && m.material) {
-        m.material = Array.isArray(m.material) ? m.material.map((mm) => mm.clone()) : m.material.clone();
-      }
-    });
-    return c;
-  }, [base]);
-}
-
 interface LegRig {
   leftThigh: THREE.Object3D | null;
   rightThigh: THREE.Object3D | null;
   hips: THREE.Object3D | null;
 }
 
-/** Heuristic bone lookup. Handles Mixamo, Blender, and generic naming. */
 function findLegPairs(root: THREE.Object3D): LegRig {
   const bones: THREE.Object3D[] = [];
   root.traverse((o) => {
@@ -63,7 +89,6 @@ function findLegPairs(root: THREE.Object3D): LegRig {
     if (b.isBone) bones.push(b);
   });
   if (bones.length === 0) return { leftThigh: null, rightThigh: null, hips: null };
-
   const pick = (re: RegExp) => bones.find((b) => re.test(b.name)) ?? null;
   const hips = pick(/hips|pelvis|spine_?0?1/i);
   const leftThigh =
@@ -75,9 +100,17 @@ function findLegPairs(root: THREE.Object3D): LegRig {
   return { leftThigh, rightThigh, hips };
 }
 
-function BotBody({ index, base, weaponBase }: {
+type ActionMap = Partial<Record<'idle' | 'walk' | 'run' | 'death', THREE.AnimationAction>>;
+
+function BotBody({
+  index,
+  body,
+  clips,
+  weaponBase,
+}: {
   index: number;
-  base: THREE.Group;
+  body: THREE.Group;
+  clips: THREE.AnimationClip[];
   weaponBase: THREE.Group | null;
 }) {
   const group = useRef<THREE.Group>(null);
@@ -85,10 +118,36 @@ function BotBody({ index, base, weaponBase }: {
   const weapon = useRef<THREE.Group>(null);
   const flashRef = useRef<THREE.Mesh>(null);
 
-  const body = useClonedBody(base);
+  const mixer = useMemo(() => (clips.length > 0 ? new THREE.AnimationMixer(body) : null), [body, clips]);
+  const actions = useMemo<ActionMap>(() => {
+    if (!mixer || clips.length === 0) return {};
+    const picked = pickClips(clips);
+    const map: ActionMap = {};
+    (['idle', 'walk', 'run', 'death'] as const).forEach((k) => {
+      const clip = picked[k];
+      if (clip) {
+        const a = mixer.clipAction(clip);
+        a.enabled = true;
+        a.setEffectiveWeight(0);
+        a.play();
+        map[k] = a;
+      }
+    });
+    return map;
+  }, [mixer, clips]);
+
+  const hasClips = Object.keys(actions).length > 0;
+  const current = useRef<'idle' | 'walk' | 'run' | 'death' | null>(null);
+  const wasAlive = useRef(true);
+
   const rig = useMemo(() => findLegPairs(body), [body]);
   const isSkinned = !!(rig.leftThigh && rig.rightThigh);
   const phaseOffset = useMemo(() => Math.random() * Math.PI * 2, []);
+  const restRot = useMemo(() => ({
+    l: rig.leftThigh ? rig.leftThigh.rotation.x : 0,
+    r: rig.rightThigh ? rig.rightThigh.rotation.x : 0,
+  }), [rig]);
+  const walkPhase = useRef(0);
 
   const weaponObj = useMemo(() => {
     if (!weaponBase) return nv4StandIn();
@@ -96,18 +155,30 @@ function BotBody({ index, base, weaponBase }: {
     c.traverse((o) => {
       const m = o as THREE.Mesh;
       if (m.isMesh && m.material) {
-        m.material = Array.isArray(m.material) ? m.material.map((mm) => mm.clone()) : m.material.clone();
+        m.material = Array.isArray(m.material)
+          ? m.material.map((mm) => mm.clone())
+          : m.material.clone();
       }
     });
     return c;
   }, [weaponBase]);
 
-  const restRot = useMemo(() => ({
-    l: rig.leftThigh ? rig.leftThigh.rotation.x : 0,
-    r: rig.rightThigh ? rig.rightThigh.rotation.x : 0,
-  }), [rig]);
+  const fadeTo = (next: 'idle' | 'walk' | 'run' | 'death') => {
+    if (current.current === next) return;
+    const nextAct = actions[next];
+    if (!nextAct) return;
+    const prev = current.current ? actions[current.current] : null;
+    nextAct.reset();
+    nextAct.setEffectiveWeight(1);
+    nextAct.play();
+    if (prev && prev !== nextAct) prev.crossFadeTo(nextAct, FADE, false);
+    else nextAct.fadeIn(FADE);
+    current.current = next;
+  };
 
-  const walkPhase = useRef(0);
+  useEffect(() => {
+    return () => { mixer?.stopAllAction(); };
+  }, [mixer]);
 
   useFrame((_, dt) => {
     const b = bots[index];
@@ -120,46 +191,76 @@ function BotBody({ index, base, weaponBase }: {
     const speed = Math.hypot(b.vel.x, b.vel.z);
     const norm = Math.min(1, speed / PATROL_SPEED);
 
-    // Root-motion trick: phase advances by distance traveled, not wall time.
-    // Slightly higher multiplier = faster, more readable step cycle.
-    walkPhase.current += speed * dt * 4.8;
-
-    if (inner.current) {
-      if (b.alive) {
-        const ph = walkPhase.current + phaseOffset;
-        const swing = Math.sin(ph);
-
-        if (isSkinned && rig.leftThigh && rig.rightThigh) {
-          const amp = 0.65 * norm;
-          rig.leftThigh.rotation.x = restRot.l + swing * amp;
-          rig.rightThigh.rotation.x = restRot.r - swing * amp;
-          if (rig.hips) rig.hips.rotation.z = Math.sin(ph * 0.5) * 0.05 * norm;
-          inner.current.position.y = Math.abs(Math.cos(ph)) * 0.04 * norm;
-          inner.current.rotation.x = THREE.MathUtils.lerp(inner.current.rotation.x, -0.08 * norm, 0.2);
-          inner.current.rotation.z = THREE.MathUtils.lerp(inner.current.rotation.z, 0, 0.2);
-        } else {
-          // Rigid-mesh fallback (most Sketchfab Ghost models have no skeleton).
-          // Stronger lean / sway / step-bob so the character reads as walking
-          // instead of floating/gliding.
-          const ph2 = walkPhase.current * 1.8 + phaseOffset;
-          const lean = -0.14 * norm;
-          const sway = Math.sin(ph2) * 0.11 * norm;
-          const bob  = Math.abs(Math.sin(ph2)) * 0.07 * norm;
-          const yawW = Math.sin(ph2 * 0.5) * 0.07 * norm;
-          inner.current.rotation.x = THREE.MathUtils.lerp(inner.current.rotation.x, lean, 0.22);
-          inner.current.rotation.z = THREE.MathUtils.lerp(inner.current.rotation.z, sway, 0.28);
-          inner.current.rotation.y = THREE.MathUtils.lerp(inner.current.rotation.y, yawW, 0.22);
-          inner.current.position.y = bob;
-          inner.current.position.x = Math.sin(ph2) * 0.03 * norm;
+    if (hasClips && mixer) {
+      if (!b.alive) {
+        if (wasAlive.current) {
+          wasAlive.current = false;
+          if (actions.death) fadeTo('death');
         }
-        g.visible = true;
+        mixer.update(dt);
       } else {
+        wasAlive.current = true;
+        if (speed < 0.35) fadeTo('idle');
+        else if (speed < 2.4 || !actions.run) fadeTo('walk');
+        else fadeTo('run');
+
+        const act = current.current ? actions[current.current] : null;
+        if (act && current.current !== 'idle' && current.current !== 'death') {
+          const base = current.current === 'run' ? 4.5 : 3.2;
+          act.timeScale = THREE.MathUtils.clamp(speed / Math.max(base, 0.1), 0.55, 1.6);
+        } else if (act) {
+          act.timeScale = 1;
+        }
+        mixer.update(dt);
+      }
+
+      if (!b.alive && !actions.death && inner.current) {
         const age = T.time - b.deathT;
         inner.current.rotation.x = Math.min(Math.PI / 2, age * 5);
         inner.current.position.y = -Math.min(0.5, Math.max(0, age - 2.5) * 0.5);
+      } else if (b.alive && inner.current) {
+        inner.current.rotation.x = 0;
         inner.current.rotation.z = 0;
+        inner.current.position.y = 0;
       }
+      g.visible = true;
+    } else {
+      walkPhase.current += speed * dt * 4.8;
+      if (inner.current) {
+        if (b.alive) {
+          const ph = walkPhase.current + phaseOffset;
+          const swing = Math.sin(ph);
+          if (isSkinned && rig.leftThigh && rig.rightThigh) {
+            const amp = 0.65 * norm;
+            rig.leftThigh.rotation.x = restRot.l + swing * amp;
+            rig.rightThigh.rotation.x = restRot.r - swing * amp;
+            if (rig.hips) rig.hips.rotation.z = Math.sin(ph * 0.5) * 0.05 * norm;
+            inner.current.position.y = Math.abs(Math.cos(ph)) * 0.04 * norm;
+            inner.current.rotation.x = THREE.MathUtils.lerp(inner.current.rotation.x, -0.08 * norm, 0.2);
+            inner.current.rotation.z = THREE.MathUtils.lerp(inner.current.rotation.z, 0, 0.2);
+          } else {
+            const ph2 = walkPhase.current * 1.8 + phaseOffset;
+            const lean = -0.14 * norm;
+            const sway = Math.sin(ph2) * 0.11 * norm;
+            const bob = Math.abs(Math.sin(ph2)) * 0.07 * norm;
+            const yawW = Math.sin(ph2 * 0.5) * 0.07 * norm;
+            inner.current.rotation.x = THREE.MathUtils.lerp(inner.current.rotation.x, lean, 0.22);
+            inner.current.rotation.z = THREE.MathUtils.lerp(inner.current.rotation.z, sway, 0.28);
+            inner.current.rotation.y = THREE.MathUtils.lerp(inner.current.rotation.y, yawW, 0.22);
+            inner.current.position.y = bob;
+            inner.current.position.x = Math.sin(ph2) * 0.03 * norm;
+          }
+          g.visible = true;
+        } else {
+          const age = T.time - b.deathT;
+          inner.current.rotation.x = Math.min(Math.PI / 2, age * 5);
+          inner.current.position.y = -Math.min(0.5, Math.max(0, age - 2.5) * 0.5);
+          inner.current.rotation.z = 0;
+        }
+      }
+    }
 
+    if (inner.current) {
       inner.current.traverse((o) => {
         const m = o as THREE.Mesh & { material?: THREE.MeshLambertMaterial };
         if (m.isMesh && m.material && m.material.color) {
@@ -175,7 +276,7 @@ function BotBody({ index, base, weaponBase }: {
       const aim = b.state === 'combat' ? 1 : 0;
       const targetPitch = THREE.MathUtils.lerp(-0.9, -0.1, aim);
       weapon.current.rotation.x = THREE.MathUtils.lerp(weapon.current.rotation.x, targetPitch, 0.15);
-      weapon.current.rotation.y = Math.sin(walkPhase.current * 1.6 + phaseOffset) * 0.05 * norm;
+      weapon.current.rotation.y = Math.sin((walkPhase.current || T.time * 3) * 1.6 + phaseOffset) * 0.05 * norm;
     }
 
     if (flashRef.current) flashRef.current.visible = T.time - b.flashT < 0.05;
@@ -198,15 +299,31 @@ function BotBody({ index, base, weaponBase }: {
 }
 
 function GhostBot({ index, url, weaponUrl }: { index: number; url: string; weaponUrl: string | null }) {
-  const base = useGhostBase(url);
+  const gltf = useGhostGltf(url);
   const weaponBase = useNv4Base(weaponUrl);
-  return <BotBody index={index} base={base} weaponBase={weaponBase} />;
+
+  const { body, clips } = useMemo(() => {
+    const cloned = SkeletonUtils.clone(gltf.scene) as THREE.Group;
+    normalizeRoot(cloned, 1.8, -0.12);
+    cloned.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh && m.material) {
+        m.material = Array.isArray(m.material)
+          ? m.material.map((mm) => mm.clone())
+          : m.material.clone();
+      }
+    });
+    const clips = (gltf.animations ?? []).map((c) => c.clone());
+    return { body: cloned, clips };
+  }, [gltf.scene, gltf.animations, index]);
+
+  return <BotBody index={index} body={body} clips={clips} weaponBase={weaponBase} />;
 }
 
 function StandInBot({ index, weaponUrl }: { index: number; weaponUrl: string | null }) {
   const body = useMemo(() => ghostStandIn(), []);
   const weaponBase = useNv4Base(weaponUrl);
-  return <BotBody index={index} base={body} weaponBase={weaponBase} />;
+  return <BotBody index={index} body={body} clips={[]} weaponBase={weaponBase} />;
 }
 
 export function BotsView() {
@@ -221,7 +338,7 @@ export function BotsView() {
     <group>
       {Array.from({ length: count }, (_, i) =>
         useGLB ? (
-          <Suspense key={`g${i}`} fallback={<StandInBot index={i} weaponUrl={weaponUrl} />}>
+          <Suspense key={`g${i}-${ghost.url}`} fallback={<StandInBot index={i} weaponUrl={weaponUrl} />}>
             <GhostBot index={i} url={ghost.url} weaponUrl={weaponUrl} />
           </Suspense>
         ) : (
